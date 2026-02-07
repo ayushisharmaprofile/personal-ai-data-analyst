@@ -2,8 +2,9 @@ import streamlit as st
 from analyst import load_data, suggest_prompts, prompt_to_code, run_code, ask_llm
 import pandas as pd
 
-st.set_page_config(page_title="Personal AI Data Analyst", layout="wide")
-st.title("🧠 Personal AI Data Analyst — Interactive Dashboard")
+st.set_page_config(page_title="Your Insight Buddy", layout="wide")
+st.title("Your Insight Buddy")
+st.markdown("### What story is your data telling?")
 
 st.sidebar.header("Settings")
 use_llm = st.sidebar.checkbox("Use local LLM (ollama) for custom prompts", value=False)
