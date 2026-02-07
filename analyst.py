@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 import pandas as pd
 import matplotlib.pyplot as plt
+import plotly.express as px
 import numpy as np
 import textwrap
 import sys
@@ -179,15 +180,9 @@ def prompt_to_code(prompt: str, df: pd.DataFrame):
         if col:
             code = textwrap.dedent(f"""
                 # histogram for '{col}'
-                plt.figure(figsize=(6,4))
-                df['{col}'].dropna().astype(float).hist(bins=30)
-                plt.title('Histogram of {col}')
-                plt.xlabel('{col}')
-                plt.ylabel('count')
-                # produce an image by saving to result_img_path variable
-                result_img_path = None
+                fig = px.histogram(df, x='{col}', nbins=30, title='Histogram of {col}')
+                result = fig
             """)
-            # We'll return plotting code that uses plt; execution will save figure
             return code
 
     # Scatter plot
@@ -197,10 +192,8 @@ def prompt_to_code(prompt: str, df: pd.DataFrame):
         if m:
             xcol, ycol = m.group(1), m.group(2)
             code = textwrap.dedent(f"""
-                plt.figure(figsize=(6,4))
-                df.plot.scatter(x='{xcol}', y='{ycol}')
-                plt.title('{ycol} vs {xcol}')
-                result_img_path = None
+                fig = px.scatter(df, x='{xcol}', y='{ycol}', title='{ycol} vs {xcol}')
+                result = fig
             """)
             return code
 
@@ -226,7 +219,8 @@ def prompt_to_code(prompt: str, df: pd.DataFrame):
                 tmp['{dcol}'] = pd.to_datetime(tmp['{dcol}'], errors='coerce')
                 res = tmp.dropna(subset=['{dcol}'])
                 res = res.set_index('{dcol}').resample('M')['{ag}'].sum().reset_index()
-                result = res
+                fig = px.line(res, x='{dcol}', y='{ag}', title='Monthly sum of {ag}')
+                result = fig
             """)
             return code
 
@@ -240,7 +234,8 @@ def prompt_to_code(prompt: str, df: pd.DataFrame):
                 tmp = df.copy()
                 tmp['{dcol}'] = pd.to_datetime(tmp['{dcol}'], errors='coerce')
                 res = tmp.dropna(subset=['{dcol}']).set_index('{dcol}').resample('M').size().reset_index(name='count')
-                result = res
+                fig = px.line(res, x='{dcol}', y='count', title='Counts per month')
+                result = fig
             """)
             return code
 
@@ -248,14 +243,8 @@ def prompt_to_code(prompt: str, df: pd.DataFrame):
     if "correlation matrix heatmap" in p or "correlation heatmap" in p:
         code = textwrap.dedent("""
             corr = df.select_dtypes(include=['number']).corr()
-            import matplotlib.pyplot as plt
-            plt.figure(figsize=(6,5))
-            plt.imshow(corr, cmap='viridis', aspect='auto')
-            plt.colorbar()
-            plt.xticks(range(len(corr)), corr.columns, rotation=90)
-            plt.yticks(range(len(corr)), corr.columns)
-            plt.title('Correlation matrix')
-            result_img_path = None
+            fig = px.imshow(corr, text_auto=True, aspect="auto", title='Correlation matrix')
+            result = fig
         """)
         return code
 
@@ -283,14 +272,11 @@ def run_code(df: pd.DataFrame, code: str):
     Returns a dict:
       - {"type":"text","output":...}
       - {"type":"dataframe","df": pandas.DataFrame}
-      - {"type":"image","path": path_to_png}
-    Execution conventions:
-      - If code sets a variable `result` to a DataFrame or string, we return it.
-      - If code uses matplotlib to plot, we save the current figure to a temp PNG and return image.
-      - If code raises, return error text.
+      - {"type":"plotly","fig": plotly.graph_objects.Figure}
+      - {"type":"image","path": path_to_png} (fallback)
     """
     # prepare namespace
-    local_ns = {"pd": pd, "np": np, "df": df, "plt": plt}
+    local_ns = {"pd": pd, "np": np, "df": df, "plt": plt, "px": px}
     # capture prints
     old_stdout = sys.stdout
     stdout_buf = io.StringIO()
@@ -298,29 +284,45 @@ def run_code(df: pd.DataFrame, code: str):
     try:
         # run
         exec(code, {}, local_ns)
-        # first, if plotting occurred (plt has a current figure), save it
-        # If code created result_img_path variable, prefer it
-        if "result_img_path" in local_ns and local_ns["result_img_path"]:
-            path = local_ns["result_img_path"]
-            return {"type": "image", "path": path}
-        # check for figure in plt
+        
+        # Check for plotly figure (in result variable or generic 'fig' variable)
+        if "result" in local_ns:
+            res = local_ns["result"]
+            # If result is a Plotly figure
+            if hasattr(res, "show") and hasattr(res, "to_json"): 
+                return {"type": "plotly", "fig": res}
+            # If result is a DataFrame
+            if isinstance(res, pd.DataFrame):
+                return {"type": "dataframe", "df": res}
+            # If result is a string/other
+            if not isinstance(res, (pd.DataFrame, type(plt))):
+                # Don't return plot object as text, but return text if it's string
+                 if isinstance(res, str):
+                    return {"type": "text", "output": res}
+
+        # Check for 'fig' variable explicitly if 'result' wasn't useful
+        if "fig" in local_ns:
+             res = local_ns["fig"]
+             if hasattr(res, "show") and hasattr(res, "to_json"):
+                 return {"type": "plotly", "fig": res}
+
+        # Fallback: check for matplotlib figure
         figs = plt.get_fignums()
         if figs:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f:
                 plt.savefig(f.name, bbox_inches="tight", dpi=150)
                 plt.close("all")
                 return {"type": "image", "path": f.name}
-        # check for result variable
+        
+        # If result was present but we didn't return yet (e.g. non-string non-df)
         if "result" in local_ns:
-            res = local_ns["result"]
-            if isinstance(res, pd.DataFrame):
-                return {"type": "dataframe", "df": res}
-            else:
-                return {"type": "text", "output": str(res)}
+             return {"type": "text", "output": str(local_ns["result"])}
+
         # otherwise, return captured stdout
         out = stdout_buf.getvalue().strip()
         if out:
             return {"type": "text", "output": out}
+        
         return {"type": "text", "output": "Execution finished. No result produced."}
     except Exception as e:
         return {"type": "text", "output": f"Execution error: {e}"}

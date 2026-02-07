@@ -58,8 +58,10 @@ if st.button("Run analysis"):
                 system = (
                     "You are a helpful data analyst and will respond with Python code only.\n"
                     "You must return code inside a ```python ... ``` block. The DataFrame is named `df`.\n"
-                    "Use pandas for data manipulation and matplotlib for charts. Do not import heavy libs.\n"
-                    "If returning a chart, produce matplotlib code that draws the figure (no show()) and nothing else.\n"
+                    "Use pandas for data manipulation and plotly.express (imported as `px`) or matplotlib for charts.\n"
+                    "Prefer plotly.express for interactive charts.\n"
+                    "If returning a plotly chart, assign the figure object to a variable named `fig` or `result`.\n"
+                    "If returning a matplotlib chart, assume `plt.show()` is not needed (it will be captured auto-magically).\n"
                 )
                 raw = system + "\n# User prompt: " + final_prompt
                 llm_out = ask_llm(raw, model=llm_model)
@@ -94,8 +96,11 @@ if st.button("Run analysis"):
         # Provide CSV download
         csv = res["df"].to_csv(index=False).encode("utf-8")
         st.download_button("Download result as CSV", data=csv, file_name="result.csv", mime="text/csv")
+    elif res["type"] == "plotly":
+        st.markdown("#### Output (interactive chart)")
+        st.plotly_chart(res["fig"], use_container_width=True)
     elif res["type"] == "image":
-        st.markdown("#### Output (chart)")
+        st.markdown("#### Output (static chart)")
         st.image(res["path"], use_column_width=True)
     else:
         st.write("Unknown result type", res)
