@@ -283,7 +283,8 @@ def run_code(df: pd.DataFrame, code: str):
     sys.stdout = stdout_buf
     try:
         # run
-        exec(code, {}, local_ns)
+        # Pass local_ns as globals so that functions/comprehensions can access variables
+        exec(code, local_ns)
         
         # Check for plotly figure (in result variable or generic 'fig' variable)
         if "result" in local_ns:
